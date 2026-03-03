@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from check_rent import check_renters, get_email_body, parse_transfer_details
+from check_rent import check_renters, fetch_interac_emails, get_email_body, parse_transfer_details, INTERAC_SENDER
 
 
 # --- parse_transfer_details ---
@@ -205,3 +205,109 @@ class TestCheckRenters:
         check_renters(renters, transfers, "last 5 days")
         output = capsys.readouterr().out
         assert "YES" in output
+
+
+# --- fetch_interac_emails ---
+
+
+def _make_gmail_message(msg_id, from_addr, subject, body_text):
+    """Build a mock Gmail API message response."""
+    return {
+        "id": msg_id,
+        "payload": {
+            "headers": [
+                {"name": "From", "value": from_addr},
+                {"name": "Subject", "value": subject},
+                {"name": "Date", "value": "Mon, 1 Mar 2026 10:00:00 -0500"},
+            ],
+            "body": {"data": base64.urlsafe_b64encode(body_text.encode()).decode()},
+        },
+    }
+
+
+def _mock_service(messages):
+    """Create a mock Gmail API service that returns the given messages."""
+    service = MagicMock()
+    msg_list = [{"id": m["id"]} for m in messages]
+    service.users().messages().list().execute.return_value = {"messages": msg_list}
+
+    def get_side_effect(userId, id, format):
+        for m in messages:
+            if m["id"] == id:
+                return MagicMock(execute=MagicMock(return_value=m))
+        return MagicMock(execute=MagicMock(return_value={}))
+
+    service.users().messages().get = MagicMock(side_effect=get_side_effect)
+    return service
+
+
+class TestFetchInteracEmails:
+    def test_valid_interac_email_is_included(self):
+        msg = _make_gmail_message(
+            "1",
+            f"Interac <{INTERAC_SENDER}>",
+            "Interac e-Transfer: You've received $500.00 from JOHN SMITH and it has been automatically deposited.",
+            "",
+        )
+        service = _mock_service([msg])
+        transfers = fetch_interac_emails(service, "2026/02/26")
+        assert len(transfers) == 1
+        assert transfers[0]["sender"] == "JOHN SMITH"
+        assert transfers[0]["amount"] == 500.00
+
+    def test_non_interac_sender_is_filtered_out(self):
+        msg = _make_gmail_message(
+            "1",
+            "scammer@evil.com",
+            "Interac e-Transfer: You've received $500.00 from JOHN SMITH and it has been automatically deposited.",
+            "",
+        )
+        service = _mock_service([msg])
+        transfers = fetch_interac_emails(service, "2026/02/26")
+        assert len(transfers) == 0
+
+    def test_mixed_valid_and_invalid_senders(self):
+        valid = _make_gmail_message(
+            "1",
+            f"{INTERAC_SENDER}",
+            "Interac e-Transfer: You've received $360.00 from CHRISTIANE CHALFOUN and it has been automatically deposited.",
+            "",
+        )
+        invalid = _make_gmail_message(
+            "2",
+            "fake@notinterac.com",
+            "Interac e-Transfer: You've received $9999.00 from FAKE PERSON and it has been automatically deposited.",
+            "",
+        )
+        service = _mock_service([valid, invalid])
+        transfers = fetch_interac_emails(service, "2026/02/26")
+        assert len(transfers) == 1
+        assert transfers[0]["sender"] == "CHRISTIANE CHALFOUN"
+
+    def test_no_messages_returned(self):
+        service = MagicMock()
+        service.users().messages().list().execute.return_value = {}
+        transfers = fetch_interac_emails(service, "2026/02/26")
+        assert transfers == []
+
+    def test_unparseable_email_is_skipped(self):
+        msg = _make_gmail_message(
+            "1",
+            f"{INTERAC_SENDER}",
+            "Some random subject with no transfer info",
+            "No useful content here",
+        )
+        service = _mock_service([msg])
+        transfers = fetch_interac_emails(service, "2026/02/26")
+        assert len(transfers) == 0
+
+    def test_before_date_parameter(self):
+        msg = _make_gmail_message(
+            "1",
+            f"{INTERAC_SENDER}",
+            "Interac e-Transfer: You've received $500.00 from JOHN SMITH and it has been automatically deposited.",
+            "",
+        )
+        service = _mock_service([msg])
+        transfers = fetch_interac_emails(service, "2026/02/01", before_date="2026/03/01")
+        assert len(transfers) == 1
