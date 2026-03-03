@@ -5,10 +5,11 @@ A Python script that checks your Gmail for Interac e-Transfer notifications and 
 ## How It Works
 
 1. Connects to your Gmail account via the Gmail API (OAuth2)
-2. Searches for Interac e-Transfer deposit notifications in a specific Gmail label
-3. Parses sender names and amounts from the email subjects/bodies
-4. Compares against your list of renters and expected amounts
-5. Prints a summary showing who has paid and flags any mismatches
+2. Searches for emails in the `Transfers Interac` Gmail label that are from `notify@payments.interac.ca`
+3. Verifies each email's `From` header matches `@payments.interac.ca` to prevent false positives
+4. Parses sender names and amounts from the email subjects/bodies
+5. Compares against your list of renters and expected amounts
+6. Prints a summary showing who has paid and flags any mismatches
 
 ## Setup
 

@@ -119,7 +119,7 @@ def parse_transfer_details(subject, body):
 
 def fetch_interac_emails(service, after_date, before_date=None):
     """Fetch Interac notification emails within a date range using Gmail API."""
-    query = f"after:{after_date} label:Transfers-Interac"
+    query = f"from:{INTERAC_SENDER} after:{after_date} label:Transfers-Interac"
     if before_date:
         query += f" before:{before_date}"
 
@@ -131,6 +131,10 @@ def fetch_interac_emails(service, after_date, before_date=None):
         msg = service.users().messages().get(userId="me", id=msg_info["id"], format="full").execute()
         payload = msg.get("payload", {})
         headers = {h["name"]: h["value"] for h in payload.get("headers", [])}
+
+        from_header = headers.get("From", "")
+        if INTERAC_SENDER not in from_header.lower():
+            continue
 
         subject = headers.get("Subject", "")
         body = get_email_body(payload)
