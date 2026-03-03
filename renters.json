@@ -1,0 +1,14 @@
+{
+  "renters": [
+    { "name": "Christiane Chalfoune", "expected_amount": 360.00 },
+    { "name": "Annie Claude David", "expected_amount": 860.00 },
+    { "name": "Real Labelle", "expected_amount": 535.00 },
+    { "name": "Dre Nadia", "expected_amount": 60.00 },
+    { "name": "RESILIENCE PSYCHOTHERAPY", "expected_amount": 370.00, "psy": "Rami Nijjar" },
+    { "name": "Camillo Zacchia", "expected_amount": 1020.00 },
+    { "name": "Leonie Lemire", "expected_amount": 675.00 },
+    { "name": "Joane Labrecque", "expected_amount": 530.00 },
+    { "name": "Raymond David", "expected_amount": 385.00 },
+    { "name": "MATRIX SERVICES DE READAPTATION INC", "psy": "Julien Tousignant", "expected_amount": 185.00 }
+  ]
+}
