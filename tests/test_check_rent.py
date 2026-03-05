@@ -1,12 +1,21 @@
 """Tests for check_rent.py"""
 
 import base64
-from io import StringIO
-from unittest.mock import MagicMock
+import json
+from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
-from check_rent import check_renters, fetch_interac_emails, get_email_body, parse_transfer_details, INTERAC_SENDER
+from check_rent import (
+    check_renters,
+    fetch_interac_emails,
+    get_email_body,
+    get_gmail_service,
+    load_renters,
+    parse_transfer_details,
+    INTERAC_SENDER,
+    SCRIPT_DIR,
+)
 
 
 # --- parse_transfer_details ---
@@ -311,3 +320,110 @@ class TestFetchInteracEmails:
         service = _mock_service([msg])
         transfers = fetch_interac_emails(service, "2026/02/01", before_date="2026/03/01")
         assert len(transfers) == 1
+
+
+# --- load_renters ---
+
+
+class TestLoadRenters:
+    def test_loads_valid_json(self, tmp_path):
+        data = {"renters": [{"name": "John Smith", "expected_amount": 500.00}]}
+        (tmp_path / "renters.json").write_text(json.dumps(data))
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            result = load_renters()
+        assert len(result) == 1
+        assert result[0]["name"] == "John Smith"
+        assert result[0]["expected_amount"] == 500.00
+
+    def test_multiple_renters(self, tmp_path):
+        data = {
+            "renters": [
+                {"name": "John Smith", "expected_amount": 500.00},
+                {"name": "Jane Doe", "expected_amount": 800.00},
+            ]
+        }
+        (tmp_path / "renters.json").write_text(json.dumps(data))
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            result = load_renters()
+        assert len(result) == 2
+
+    def test_missing_file_exits(self, tmp_path):
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            with pytest.raises(SystemExit):
+                load_renters()
+
+    def test_optional_fields(self, tmp_path):
+        data = {"renters": [{"name": "John Smith"}]}
+        (tmp_path / "renters.json").write_text(json.dumps(data))
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            result = load_renters()
+        assert result[0]["name"] == "John Smith"
+        assert "expected_amount" not in result[0]
+
+
+# --- get_gmail_service ---
+
+
+class TestGetGmailService:
+    def test_missing_credentials_file_exits(self, tmp_path):
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            with pytest.raises(SystemExit):
+                get_gmail_service()
+
+    @patch("check_rent.build")
+    @patch("check_rent.Credentials.from_authorized_user_file")
+    def test_uses_existing_valid_token(self, mock_from_file, mock_build, tmp_path):
+        (tmp_path / "credentials.json").write_text("{}")
+        (tmp_path / "token.json").write_text("{}")
+
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+        mock_from_file.return_value = mock_creds
+        mock_build.return_value = MagicMock()
+
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            service = get_gmail_service()
+
+        mock_from_file.assert_called_once()
+        mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+
+    @patch("check_rent.build")
+    @patch("check_rent.Credentials.from_authorized_user_file")
+    def test_refreshes_expired_token(self, mock_from_file, mock_build, tmp_path):
+        (tmp_path / "credentials.json").write_text("{}")
+        (tmp_path / "token.json").write_text("{}")
+
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "refresh_token_value"
+        mock_creds.to_json.return_value = '{"token": "refreshed"}'
+        mock_from_file.return_value = mock_creds
+        mock_build.return_value = MagicMock()
+
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            service = get_gmail_service()
+
+        mock_creds.refresh.assert_called_once()
+        mock_build.assert_called_once()
+        assert (tmp_path / "token.json").read_text() == '{"token": "refreshed"}'
+
+    @patch("check_rent.build")
+    @patch("check_rent.InstalledAppFlow.from_client_secrets_file")
+    def test_runs_auth_flow_when_no_token(self, mock_flow_cls, mock_build, tmp_path):
+        (tmp_path / "credentials.json").write_text("{}")
+
+        mock_creds = MagicMock()
+        mock_creds.to_json.return_value = '{"token": "new"}'
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = mock_creds
+        mock_flow_cls.return_value = mock_flow
+        mock_build.return_value = MagicMock()
+
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            service = get_gmail_service()
+
+        mock_flow_cls.assert_called_once()
+        mock_flow.run_local_server.assert_called_once_with(port=0)
+        mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+        assert (tmp_path / "token.json").read_text() == '{"token": "new"}'
