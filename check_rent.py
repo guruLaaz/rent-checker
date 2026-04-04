@@ -4,6 +4,7 @@
 import argparse
 import base64
 import email
+import email.utils
 import json
 import re
 from datetime import datetime, timedelta
@@ -156,7 +157,7 @@ def check_renters(renters, transfers, label):
     max_name = max(max_name, 6)
 
     print(f"\n  Rent Transfers ({label})")
-    print(f"  {'─' * (max_name + 28)}")
+    print(f"  {'─' * (max_name + 38)}")
 
     all_received = True
     for renter in renters:
@@ -175,6 +176,15 @@ def check_renters(renters, transfers, label):
         if matched:
             transfer = matched[-1]
             actual = transfer.get("amount")
+            raw_date = transfer.get("date", "")
+            if raw_date:
+                try:
+                    dt = email.utils.parsedate_to_datetime(raw_date)
+                    date_str = dt.strftime("%b %d")
+                except Exception:
+                    date_str = "  -  "
+            else:
+                date_str = "  -  "
             if expected and actual:
                 amount_str = f"${actual:,.2f}"
                 if abs(actual - expected) > 0.01:
@@ -186,10 +196,11 @@ def check_renters(renters, transfers, label):
                 status = "YES"
         else:
             amount_str = "  -  "
+            date_str = "  -  "
             status = "NO"
             all_received = False
 
-        print(f"  {name:<{max_name}}  {amount_str:>12}   {status}")
+        print(f"  {name:<{max_name}}  {amount_str:>12}   {date_str:>6}   {status}")
 
     print()
     if all_received:
