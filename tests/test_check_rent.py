@@ -410,6 +410,39 @@ class TestGetGmailService:
 
     @patch("check_rent.build")
     @patch("check_rent.InstalledAppFlow.from_client_secrets_file")
+    @patch("check_rent.Credentials.from_authorized_user_file")
+    def test_falls_back_to_auth_flow_when_refresh_fails(
+        self, mock_from_file, mock_flow_cls, mock_build, tmp_path
+    ):
+        from google.auth.exceptions import RefreshError
+
+        (tmp_path / "credentials.json").write_text("{}")
+        (tmp_path / "token.json").write_text("{}")
+
+        stale_creds = MagicMock()
+        stale_creds.valid = False
+        stale_creds.expired = True
+        stale_creds.refresh_token = "stale_refresh_token"
+        stale_creds.refresh.side_effect = RefreshError("invalid_grant")
+        mock_from_file.return_value = stale_creds
+
+        new_creds = MagicMock()
+        new_creds.to_json.return_value = '{"token": "fresh"}'
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = new_creds
+        mock_flow_cls.return_value = mock_flow
+        mock_build.return_value = MagicMock()
+
+        with patch("check_rent.SCRIPT_DIR", tmp_path):
+            get_gmail_service()
+
+        stale_creds.refresh.assert_called_once()
+        mock_flow.run_local_server.assert_called_once_with(port=0)
+        mock_build.assert_called_once_with("gmail", "v1", credentials=new_creds)
+        assert (tmp_path / "token.json").read_text() == '{"token": "fresh"}'
+
+    @patch("check_rent.build")
+    @patch("check_rent.InstalledAppFlow.from_client_secrets_file")
     def test_runs_auth_flow_when_no_token(self, mock_flow_cls, mock_build, tmp_path):
         (tmp_path / "credentials.json").write_text("{}")
 

@@ -7,9 +7,11 @@ import email
 import email.utils
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -35,9 +37,16 @@ def get_gmail_service():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds or not creds.valid:
+        refreshed = False
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                refreshed = True
+            except RefreshError:
+                print("Stored token is no longer valid; re-authenticating...")
+                token_path.unlink(missing_ok=True)
+                creds = None
+        if not refreshed:
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             creds = flow.run_local_server(port=0)
         with open(token_path, "w") as f:
@@ -211,8 +220,13 @@ def check_renters(renters, transfers, label):
 
 
 def main():
+    # Box-drawing characters in the output crash on Windows' default cp1252
+    # console; force UTF-8 so the script runs cleanly everywhere.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Check Interac e-Transfers from renters")
-    parser.add_argument("--days", type=int, default=5, help="Number of days to look back (default: 5)")
+    parser.add_argument("--days", type=int, help="Look back N days instead of the current rent period")
     parser.add_argument("--after", type=str, help="Start date (YYYY/MM/DD)")
     parser.add_argument("--before", type=str, help="End date (YYYY/MM/DD)")
     args = parser.parse_args()
@@ -220,9 +234,17 @@ def main():
     if args.after:
         after_date = args.after
         label = f"{after_date} to {args.before or 'now'}"
-    else:
+    elif args.days:
         after_date = (datetime.now() - timedelta(days=args.days)).strftime("%Y/%m/%d")
         label = f"last {args.days} days"
+    else:
+        # Default: the current month's rent. Tenants commonly pay on the last
+        # few days of the prior month, so start the window 3 days before the
+        # 1st to avoid flagging those payments as missing.
+        today = datetime.now()
+        start = today.replace(day=1) - timedelta(days=3)
+        after_date = start.strftime("%Y/%m/%d")
+        label = today.strftime("%B %Y rent")
 
     print("\nConnecting to Gmail...")
     service = get_gmail_service()
